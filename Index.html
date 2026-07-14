@@ -254,10 +254,18 @@ a{color:inherit;}
         </div>
         <h2 style="font-size:18px;margin-bottom:18px;">Top up</h2>
         <div class="pkg-grid" id="pkgGrid"></div>
-        <div style="max-width:320px;margin-bottom:56px;">
-          <div class="field"><label>M-Pesa phone number</label><input type="tel" id="mpesaPhone" placeholder="07XX XXX XXX" /></div>
-          <button class="btn primary block" id="payBtn" disabled>Select a package</button>
-          <div class="hint" style="font-size:12px;color:var(--bone-dim);margin-top:10px;">You'll receive an STK push prompt on your phone to complete payment.</div>
+        <div style="max-width:420px;margin-bottom:56px;">
+          <div class="field">
+            <label>Step 1 — pay</label>
+            <a href="#" target="_blank" id="payLinkBtn" class="btn primary block" style="pointer-events:none;opacity:0.4;">Select a package first</a>
+            <div class="hint" style="font-size:12px;color:var(--bone-dim);margin-top:10px;">Opens the payment page in a new tab. Complete payment there, then come back here.</div>
+          </div>
+          <div class="field">
+            <label>Step 2 — confirm your payment</label>
+            <input type="text" id="paymentRef" placeholder="M-Pesa code or payment reference" />
+          </div>
+          <button class="btn ghost block" id="submitRefBtn" disabled>Select a package first</button>
+          <div class="hint" style="font-size:12px;color:var(--bone-dim);margin-top:10px;">Credits are added once payment is verified — usually within a few hours.</div>
         </div>
         <h2 style="font-size:18px;margin-bottom:8px;">Recent activity</h2>
         <div class="txn-list" id="txnList"></div>
@@ -306,7 +314,8 @@ const SUPABASE_ANON_KEY = "YOUR_ANON_KEY";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const UNLOCK_COST = 5;
-const STK_PUSH_ENDPOINT = "https://your-worker.your-subdomain.workers.dev/mpesa/stk-push";
+// Your payment link (Pesapal, Paystack, M-Pesa Pochi/Till link, etc).
+const PAYMENT_LINK = "https://YOUR_PAYMENT_LINK_HERE";
 
 let session = null;
 let pendingDob = null;
@@ -584,7 +593,8 @@ let selectedPkg = null;
 
 async function loadPackages() {
   const pkgGrid = document.getElementById("pkgGrid");
-  const payBtn = document.getElementById("payBtn");
+  const payLinkBtn = document.getElementById("payLinkBtn");
+  const submitRefBtn = document.getElementById("submitRefBtn");
   const { data: packages, error } = await supabase.from("token_packages").select("*").eq("is_active", true).order("token_count", { ascending: true });
   if (error) { toast(error.message); return; }
   pkgGrid.innerHTML = "";
@@ -596,50 +606,57 @@ async function loadPackages() {
       document.querySelectorAll(".pkg").forEach((n) => n.classList.remove("selected"));
       el.classList.add("selected");
       selectedPkg = pkg;
-      payBtn.disabled = false;
-      payBtn.textContent = `Pay KES ${pkg.price_kes.toLocaleString()}`;
+      payLinkBtn.style.pointerEvents = "auto";
+      payLinkBtn.style.opacity = "1";
+      payLinkBtn.textContent = `Pay KES ${pkg.price_kes.toLocaleString()}`;
+      payLinkBtn.href = PAYMENT_LINK;
+      submitRefBtn.disabled = false;
+      submitRefBtn.textContent = `Confirm payment for ${pkg.token_count} credits`;
     };
     pkgGrid.appendChild(el);
   });
 }
 
-document.getElementById("payBtn").onclick = async () => {
+document.getElementById("submitRefBtn").onclick = async () => {
   if (!selectedPkg) return;
-  const phone = document.getElementById("mpesaPhone").value.trim();
-  if (!/^0[71]\d{8}$/.test(phone)) { toast("Enter a valid M-Pesa number, e.g. 07XXXXXXXX"); return; }
+  const ref = document.getElementById("paymentRef").value.trim();
+  if (!ref) { toast("Enter your M-Pesa code or payment reference."); return; }
 
-  const payBtn = document.getElementById("payBtn");
-  payBtn.disabled = true; payBtn.textContent = "Sending prompt…";
+  const btn = document.getElementById("submitRefBtn");
+  btn.disabled = true; btn.textContent = "Submitting…";
 
-  try {
-    const res = await fetch(STK_PUSH_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ phone, package_id: selectedPkg.id, amount: selectedPkg.price_kes }),
-    });
-    if (!res.ok) throw new Error(await res.text());
-    toast("Check your phone to complete payment.");
-    pollBalance();
-  } catch (err) {
-    toast("Payment could not be started. Try again.");
-  } finally {
-    payBtn.disabled = false;
-    payBtn.textContent = `Pay KES ${selectedPkg.price_kes.toLocaleString()}`;
-  }
+  // No backend to auto-verify payment without a Worker — this logs a
+  // pending purchase for manual review/crediting from the Supabase dashboard.
+  const { error } = await supabase.from("token_transactions").insert({
+    user_id: session.user.id,
+    type: "purchase",
+    amount: 0, // set to selectedPkg.token_count once verified & credited manually
+    action: "pending_topup",
+    mpesa_receipt: ref,
+  });
+
+  btn.disabled = false;
+  btn.textContent = `Confirm payment for ${selectedPkg.token_count} credits`;
+
+  if (error) { toast(error.message); return; }
+
+  document.getElementById("paymentRef").value = "";
+  toast("Submitted — your credits will be added once payment is verified.");
+  loadTransactions();
 };
-
-function pollBalance(attempts = 0) {
-  if (attempts > 20) return;
-  setTimeout(async () => { await refreshWalletChip(); await loadTransactions(); pollBalance(attempts + 1); }, 3000);
-}
 
 async function loadTransactions() {
   const list = document.getElementById("txnList");
   const { data, error } = await supabase.from("token_transactions").select("*").eq("user_id", session.user.id).order("created_at", { ascending: false }).limit(20);
   if (error || !data || data.length === 0) { list.innerHTML = `<div class="empty-state" style="padding:30px 0;">No activity yet.</div>`; return; }
-  const describe = (t) => t.type === "purchase" ? "Token top-up" : (t.action === "unlock_profile" ? "Unlocked a profile" : (t.action || t.type));
+  const describe = (t) => {
+    if (t.action === "pending_topup") return `Payment submitted (${t.mpesa_receipt}) — pending verification`;
+    if (t.type === "purchase") return "Token top-up";
+    if (t.action === "unlock_profile") return "Unlocked a profile";
+    return t.action || t.type;
+  };
   list.innerHTML = data.map((t) => `
-    <div class="txn-row"><span class="desc">${describe(t)}</span><span class="amt ${t.amount >= 0 ? "pos" : "neg"}">${t.amount >= 0 ? "+" : ""}${t.amount}</span></div>`).join("");
+    <div class="txn-row"><span class="desc">${describe(t)}</span><span class="amt ${t.amount >= 0 ? "pos" : "neg"}">${t.action === "pending_topup" ? "Pending" : (t.amount >= 0 ? "+" + t.amount : t.amount)}</span></div>`).join("");
 }
 
 /* ---------- chat ---------- */
