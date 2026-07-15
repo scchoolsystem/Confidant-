@@ -305,6 +305,7 @@ a{color:inherit;}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+(function () {
 /* ==========================================================================
    Confidant — single-file app
    Fill in SUPABASE_URL / SUPABASE_ANON_KEY before deploying.
@@ -749,6 +750,13 @@ async function sendMessage() {
   input.value = "";
 }
 
+/* ---------- expose functions used by inline onclick="" attributes ---------- */
+window.go = go;
+window.sessionOK = sessionOK;
+window.renderLogin = renderLogin;
+window.renderSignup = renderSignup;
+window.doSignOut = doSignOut;
+
 /* ---------- boot ---------- */
 (async () => {
   const { data: { session: existing } } = await supabase.auth.getSession();
@@ -762,6 +770,8 @@ async function sendMessage() {
     go("landing");
   }
 })();
+
+})(); // end IIFE
 </script>
 </body>
 </html>
