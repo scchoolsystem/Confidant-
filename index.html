@@ -143,11 +143,19 @@ a{color:inherit;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--charcoal);border:1px solid var(--champagne);color:var(--bone);padding:12px 22px;border-radius:var(--radius);font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;}
 .toast.show{opacity:1;}
 
+.chat-back-btn{
+  display:none;background:none;border:none;color:var(--champagne);
+  font-size:20px;cursor:pointer;padding:0 4px;line-height:1;
+}
+
 @media(max-width:860px){
   .grid{grid-template-columns:repeat(2,1fr);}
   .pdetail{grid-template-columns:1fr;}
   .pkg-grid{grid-template-columns:1fr;}
-  .chat-shell{grid-template-columns:1fr;height:auto;}
+  .chat-shell{grid-template-columns:1fr;height:75vh;}
+  .chat-back-btn{display:inline-block;}
+  .chat-shell.conversation-open .chat-list{display:none;}
+  .chat-shell:not(.conversation-open) .chat-main{display:none;}
   .hero h1{font-size:32px;}
 }
 </style>
@@ -165,7 +173,7 @@ a{color:inherit;}
       <nav class="nav" id="loggedInNav" style="display:none;">
         <a onclick="go('browse')" data-view-link="browse">Browse</a>
         <a onclick="go('myprofile')" data-view-link="myprofile">My Profile</a>
-        <a onclick="go('chat')" data-view-link="chat">Messages</a>
+        <a onclick="go('chat')" data-view-link="chat">Messages<span id="messagesNavDot" style="display:none;width:6px;height:6px;border-radius:50%;background:var(--champagne);margin-left:6px;vertical-align:middle;"></span></a>
         <a onclick="go('wallet')" data-view-link="wallet">Wallet</a>
         <div class="credit-chip"><span class="dot"></span><span data-wallet-balance>—</span> credits</div>
         <a onclick="doSignOut()">Log out</a>
@@ -482,7 +490,7 @@ a{color:inherit;}
 
 
       <section class="view" id="view-chat">
-        <div class="chat-shell">
+        <div class="chat-shell" id="chatShell">
           <div class="chat-list" id="chatList"></div>
           <div class="chat-main">
             <div id="chatEmpty" class="empty-state" style="height:100%;">
@@ -490,7 +498,10 @@ a{color:inherit;}
               <div style="font-size:12px;">You can only message members you've unlocked.</div>
             </div>
             <div id="chatActive" style="flex:1;display:none;flex-direction:column;">
-              <div class="chat-head" id="chatHeadName"></div>
+              <div class="chat-head" style="display:flex;align-items:center;gap:10px;">
+                <button class="chat-back-btn" onclick="closeActiveConversation()" aria-label="Back to conversations">←</button>
+                <span id="chatHeadName"></span>
+              </div>
               <div class="chat-msgs" id="chatMsgs"></div>
               <div class="chat-input">
                 <label class="btn ghost" style="padding:12px 16px;cursor:pointer;">
@@ -548,6 +559,7 @@ let pendingDob = null;
 let currentProfileId = null;
 let currentChatPeer = null;
 let chatChannel = null;
+let seenMessageIds = new Set();
 
 /* ---------- toast ---------- */
 function toast(msg, ms = 2600) {
@@ -664,6 +676,7 @@ async function handleLogin(e) {
   session = data.session;
   setLoggedInUI(true);
   refreshWalletChip();
+  checkUnreadIndicator();
   go("browse");
 }
 
@@ -920,6 +933,52 @@ async function loadTransactions() {
 }
 
 /* ---------- chat ---------- */
+function formatMsgTime(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+async function getConversationPreviews(myId, peerIds) {
+  // Pull recent messages involving me, then reduce to the latest one per peer.
+  // 300 is plenty for a small member base; revisit with pagination if this
+  // ever needs to scale to heavy chat volume.
+  const { data: recent } = await supabase
+    .from("messages")
+    .select("sender_id, recipient_id, body, image_url, created_at")
+    .or(`sender_id.eq.${myId},recipient_id.eq.${myId}`)
+    .order("created_at", { ascending: false })
+    .limit(300);
+
+  const previews = {};
+  (recent || []).forEach((m) => {
+    const peerId = m.sender_id === myId ? m.recipient_id : m.sender_id;
+    if (!peerIds.has(peerId) || previews[peerId]) return; // keep only the first (=latest) per peer
+    previews[peerId] = {
+      text: m.image_url ? "📷 Photo" : (m.body || ""),
+      time: m.created_at,
+      fromPeer: m.sender_id !== myId,
+    };
+  });
+  return previews;
+}
+
+async function checkUnreadIndicator() {
+  if (!sessionOK()) return;
+  const myId = session.user.id;
+  const { data: iUnlocked } = await supabase.from("profile_unlocks").select("target_id").eq("unlocker_id", myId);
+  const { data: unlockedMe } = await supabase.from("profile_unlocks").select("unlocker_id").eq("target_id", myId);
+  const peerIds = new Set([...(iUnlocked || []).map((r) => r.target_id), ...(unlockedMe || []).map((r) => r.unlocker_id)]);
+  if (peerIds.size === 0) return;
+
+  const previews = await getConversationPreviews(myId, peerIds);
+  const hasUnread = Object.values(previews).some((p) => p.fromPeer);
+  document.getElementById("messagesNavDot").style.display = hasUnread ? "inline-block" : "none";
+}
+
 async function loadConversations(openPeerId) {
   const myId = session.user.id;
   const chatList = document.getElementById("chatList");
@@ -928,6 +987,7 @@ async function loadConversations(openPeerId) {
 
   chatEmpty.style.display = "flex";
   chatActive.style.display = "none";
+  document.getElementById("chatShell").classList.remove("conversation-open");
 
   const { data: iUnlocked } = await supabase.from("profile_unlocks").select("target_id").eq("unlocker_id", myId);
   const { data: unlockedMe } = await supabase.from("profile_unlocks").select("unlocker_id").eq("target_id", myId);
@@ -935,16 +995,35 @@ async function loadConversations(openPeerId) {
 
   if (peerIds.size === 0) {
     chatList.innerHTML = `<div class="empty-state" style="padding:24px;">No conversations yet. Unlock a profile from Browse to start chatting.</div>`;
+    document.getElementById("messagesNavDot").style.display = "none";
     return;
   }
 
   const { data: peers } = await supabase.from("profiles_public").select("id, display_name").in("id", Array.from(peerIds));
+  const previews = await getConversationPreviews(myId, peerIds);
+
+  // Conversations with messages float to the top, most recent first;
+  // never-messaged unlocks sit below, alphabetically.
+  const sorted = [...(peers || [])].sort((a, b) => {
+    const pa = previews[a.id], pb = previews[b.id];
+    if (pa && pb) return new Date(pb.time) - new Date(pa.time);
+    if (pa) return -1;
+    if (pb) return 1;
+    return a.display_name.localeCompare(b.display_name);
+  });
+
+  document.getElementById("messagesNavDot").style.display =
+    Object.values(previews).some((p) => p.fromPeer) ? "inline-block" : "none";
+
   chatList.innerHTML = "";
-  (peers || []).forEach((p) => {
+  sorted.forEach((p) => {
+    const preview = previews[p.id];
     const item = document.createElement("div");
     item.className = "item";
     item.dataset.id = p.id;
-    item.innerHTML = `<div class="nm">${escapeHtml(p.display_name)}</div><div class="lm">Tap to open</div>`;
+    item.innerHTML = `
+      <div class="nm">${escapeHtml(p.display_name)}</div>
+      <div class="lm">${preview ? `${escapeHtml(preview.text)} · ${formatMsgTime(preview.time)}` : "No messages yet — say hi"}</div>`;
     item.onclick = () => openConversation(p.id, p.display_name, item);
     chatList.appendChild(item);
   });
@@ -956,24 +1035,33 @@ async function loadConversations(openPeerId) {
   }
 }
 
+function closeActiveConversation() {
+  document.getElementById("chatShell").classList.remove("conversation-open");
+  document.getElementById("chatEmpty").style.display = "flex";
+  document.getElementById("chatActive").style.display = "none";
+}
+
 async function openConversation(peerId, peerName, itemEl) {
   const myId = session.user.id;
   currentChatPeer = peerId;
+  seenMessageIds = new Set(); // fresh dedupe set per conversation
   document.querySelectorAll(".chat-list .item").forEach((n) => n.classList.remove("active"));
   if (itemEl) itemEl.classList.add("active");
 
   document.getElementById("chatEmpty").style.display = "none";
   document.getElementById("chatActive").style.display = "flex";
+  document.getElementById("chatShell").classList.add("conversation-open");
   document.getElementById("chatHeadName").textContent = peerName;
 
   await loadMessages();
+  document.getElementById("messagesNavDot").style.display = "none"; // reading clears the badge for this pass
 
   if (chatChannel) supabase.removeChannel(chatChannel);
   chatChannel = supabase.channel(`chat-${[myId, peerId].sort().join("-")}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
       const m = payload.new;
       const isThisThread = (m.sender_id === myId && m.recipient_id === peerId) || (m.sender_id === peerId && m.recipient_id === myId);
-      if (isThisThread) appendMessage(m, myId);
+      if (isThisThread) appendMessageOnce(m, myId);
     }).subscribe();
 }
 
@@ -985,18 +1073,28 @@ async function loadMessages() {
     .order("created_at", { ascending: true });
   chatMsgs.innerHTML = "";
   if (error) return toast(error.message);
-  (data || []).forEach((m) => appendMessage(m, myId));
+  (data || []).forEach((m) => appendMessageOnce(m, myId));
+}
+
+// Both the optimistic send and the realtime echo can try to render the
+// same row — this makes sure it only ever appears once.
+function appendMessageOnce(m, myId) {
+  if (m.id && seenMessageIds.has(m.id)) return;
+  if (m.id) seenMessageIds.add(m.id);
+  appendMessage(m, myId);
 }
 
 function appendMessage(m, myId) {
   const chatMsgs = document.getElementById("chatMsgs");
   const bubble = document.createElement("div");
   bubble.className = `msg ${m.sender_id === myId ? "out" : "in"}`;
+  const timeHtml = `<div style="font-size:10px;color:var(--bone-dim);margin-top:4px;">${m.created_at ? formatMsgTime(m.created_at) : ""}</div>`;
   if (m.image_url) {
     bubble.innerHTML = `<img src="${escapeHtml(m.image_url)}" style="max-width:220px;border-radius:2px;display:block;" />`;
     if (m.body) bubble.innerHTML += `<div style="margin-top:6px;">${escapeHtml(m.body)}</div>`;
+    bubble.innerHTML += timeHtml;
   } else {
-    bubble.textContent = m.body;
+    bubble.innerHTML = `<div>${escapeHtml(m.body)}</div>${timeHtml}`;
   }
   chatMsgs.appendChild(bubble);
   chatMsgs.scrollTop = chatMsgs.scrollHeight;
@@ -1071,12 +1169,12 @@ async function sendMessage(photoFile) {
     }
   }
 
-  const { error } = await supabase.from("messages").insert({
+  const { data: sent, error } = await supabase.from("messages").insert({
     sender_id: session.user.id,
     recipient_id: currentChatPeer,
     body: body || null,
     image_url: imageUrl,
-  });
+  }).select().single();
 
   if (error) {
     const msg = error.message.includes("MESSAGE_BLOCKED")
@@ -1085,6 +1183,11 @@ async function sendMessage(photoFile) {
     await refundAndFail(`${msg} Your credit was refunded.`);
     return;
   }
+
+  // Show it right away rather than waiting on the realtime echo — the
+  // dedupe in appendMessageOnce means we won't double-render it if the
+  // realtime event for this same row arrives a moment later.
+  appendMessageOnce(sent, session.user.id);
 
   sendBtn.disabled = false;
   input.value = "";
@@ -1238,6 +1341,7 @@ window.sessionOK = sessionOK;
 window.renderLogin = renderLogin;
 window.renderSignup = renderSignup;
 window.doSignOut = doSignOut;
+window.closeActiveConversation = closeActiveConversation;
 
 /* ---------- boot ---------- */
 (async () => {
@@ -1246,6 +1350,7 @@ window.doSignOut = doSignOut;
     session = existing;
     setLoggedInUI(true);
     refreshWalletChip();
+    checkUnreadIndicator();
     go("browse");
   } else {
     renderSignup();
