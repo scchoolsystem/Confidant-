@@ -203,7 +203,7 @@ a{color:inherit;}
           </div>
           <div style="flex:1;text-align:center;">
             <div class="display" style="font-size:28px;color:var(--champagne);">Private</div>
-            <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone-dim);margin-top:6px;">Contact stays hidden until unlocked</div>
+            <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone-dim);margin-top:6px;">No phone numbers exchanged</div>
           </div>
         </div>
 
@@ -220,7 +220,7 @@ a{color:inherit;}
             <div>
               <div class="display" style="font-size:32px;color:var(--champagne-dim);margin-bottom:10px;">02</div>
               <h3 style="font-size:17px;margin-bottom:8px;">Browse and unlock</h3>
-              <p style="font-size:13px;color:var(--bone-dim);">Spend a few credits to unlock a member's contact details — no wasted time on profiles that aren't a fit.</p>
+              <p style="font-size:13px;color:var(--bone-dim);">Spend a few credits to unlock messaging with a member — no wasted time on profiles that aren't a fit.</p>
             </div>
             <div>
               <div class="display" style="font-size:32px;color:var(--champagne-dim);margin-bottom:10px;">03</div>
@@ -240,8 +240,8 @@ a{color:inherit;}
               <p style="font-size:13px;color:var(--bone-dim);">Every account is reviewed before it appears in Browse. No bots, no catfishing.</p>
             </div>
             <div class="mcard" style="padding:24px;">
-              <h3 style="font-size:16px;margin-bottom:8px;">Contact stays hidden</h3>
-              <p style="font-size:13px;color:var(--bone-dim);">Phone and WhatsApp are never public — they're revealed only when someone chooses to unlock a profile.</p>
+              <h3 style="font-size:16px;margin-bottom:8px;">No phone numbers exchanged</h3>
+              <p style="font-size:13px;color:var(--bone-dim);">Every conversation stays inside Confidant's chat — no phone numbers or outside contacts ever get shared.</p>
             </div>
             <div class="mcard" style="padding:24px;">
               <h3 style="font-size:16px;margin-bottom:8px;">Private messaging</h3>
@@ -339,8 +339,6 @@ a{color:inherit;}
               </select>
             </div>
             <div class="field"><label>About you</label><textarea id="obBio" rows="4" placeholder="A few lines about what you're looking for."></textarea></div>
-            <div class="field"><label>Phone (revealed only after someone unlocks your profile)</label><input type="tel" id="obPhone" placeholder="+254 7XX XXX XXX" required /></div>
-            <div class="field"><label>WhatsApp (optional)</label><input type="tel" id="obWhatsapp" placeholder="+254 7XX XXX XXX" /></div>
             <button type="submit" class="btn primary block">Enter Confidant</button>
           </form>
         </div>
@@ -396,9 +394,15 @@ a{color:inherit;}
       </section>
 
       <!-- ============ VIEW: MY PROFILE ============ -->
+      <!-- ============ VIEW: MY PROFILE (read-only display) ============ -->
       <section class="view" id="view-myprofile">
+        <div class="pdetail" id="myProfileDetail"><div class="empty-state">Loading your profile…</div></div>
+      </section>
+
+      <!-- ============ VIEW: MY PROFILE — EDIT ============ -->
+      <section class="view" id="view-myprofile-edit">
         <div class="mcard form-card" style="max-width:560px;">
-          <h1 style="font-size:24px;margin-bottom:6px;">My Profile</h1>
+          <h1 style="font-size:24px;margin-bottom:6px;">Edit Profile</h1>
           <div style="color:var(--bone-dim);font-size:13px;margin-bottom:16px;">This is exactly what other members see when they view you. Keep it detailed and current.</div>
           <div id="mpCooldownBanner" style="display:none;font-size:12px;color:var(--champagne);border:1px solid rgba(201,161,93,0.3);background:rgba(201,161,93,0.06);padding:10px 14px;border-radius:var(--radius);margin-bottom:20px;"></div>
 
@@ -468,9 +472,10 @@ a{color:inherit;}
             </select>
           </div>
           <div class="field"><label>About you</label><textarea id="mpBio" rows="5"></textarea></div>
-          <div class="field"><label>Phone</label><input type="tel" id="mpPhone" /></div>
-          <div class="field"><label>WhatsApp</label><input type="tel" id="mpWhatsapp" /></div>
-          <button class="btn primary block" id="mpSaveBtn">Save changes</button>
+          <div style="display:flex;gap:12px;">
+            <button class="btn ghost" style="flex:1;" onclick="go('myprofile')">Cancel</button>
+            <button class="btn primary" style="flex:2;" id="mpSaveBtn">Save changes</button>
+          </div>
           <div class="hint" style="font-size:12px;color:var(--bone-dim);margin-top:10px;">After your first edit, changes are limited to once every 24 hours.</div>
         </div>
       </section>
@@ -580,7 +585,8 @@ function go(viewName, opts = {}) {
   if (viewName === "profile" && opts.id) { currentProfileId = opts.id; loadProfile(opts.id); }
   if (viewName === "wallet") { loadPackages(); loadTransactions(); }
   if (viewName === "chat") { loadConversations(opts.openPeerId); }
-  if (viewName === "myprofile") { loadMyProfile(); }
+  if (viewName === "myprofile") { loadMyProfileDisplay(); }
+  if (viewName === "myprofile-edit") { loadMyProfileEdit(); }
 }
 
 function setLoggedInUI(loggedIn) {
@@ -705,8 +711,6 @@ document.getElementById("onboardForm").onsubmit = async (e) => {
     arrangement_type: document.getElementById("obArrangement").value || null,
     bio: document.getElementById("obBio").value,
     photo_url: photoUrl,
-    contact_phone: document.getElementById("obPhone").value,
-    contact_whatsapp: document.getElementById("obWhatsapp").value || null,
   };
   const { error } = await supabase.from("profiles").insert(payload);
   submitBtn.disabled = false; submitBtn.textContent = "Enter Confidant";
@@ -803,20 +807,16 @@ async function loadProfile(targetId) {
   function renderLocked() {
     unlockArea.innerHTML = `
       <div class="locked-box">
-        <div class="row"><span class="label">Unlock contact details</span><span class="cost">${UNLOCK_COST} credits</span></div>
+        <div class="row"><span class="label">Unlock messaging</span><span class="cost">${UNLOCK_COST} credits</span></div>
         <button class="btn primary block" id="unlockBtn">Unlock ${escapeHtml(p.display_name)}</button>
       </div>`;
     document.getElementById("unlockBtn").onclick = doUnlock;
   }
 
-  function renderUnlocked(data) {
-    const phone = data?.contact_phone ?? "on file";
-    const whatsapp = data?.contact_whatsapp;
+  function renderUnlocked() {
     unlockArea.innerHTML = `
       <div class="unlocked-box">
-        <div class="row" style="margin-bottom:0;"><span class="label" style="color:var(--sage);">Contact unlocked</span></div>
-        <div class="contact-line">Phone: ${escapeHtml(phone || "")}</div>
-        ${whatsapp ? `<div class="contact-line">WhatsApp: ${escapeHtml(whatsapp)}</div>` : ""}
+        <div class="row" style="margin-bottom:0;"><span class="label" style="color:var(--sage);">You can now message ${escapeHtml(p.display_name)}</span></div>
         <button class="btn primary" style="margin-top:16px;" id="msgBtn">Send a message</button>
       </div>`;
     document.getElementById("msgBtn").onclick = () => go("chat", { openPeerId: targetId });
@@ -825,20 +825,19 @@ async function loadProfile(targetId) {
   async function doUnlock() {
     const btn = document.getElementById("unlockBtn");
     btn.disabled = true; btn.textContent = "Processing…";
-    const { data, error } = await spendTokens("unlock_profile", targetId, UNLOCK_COST);
+    const { error } = await spendTokens("unlock_profile", targetId, UNLOCK_COST);
     if (error) {
       btn.disabled = false; btn.textContent = `Unlock ${p.display_name}`;
       toast(error.message.includes("Insufficient") ? "Not enough credits — top up your wallet." : error.message);
       return;
     }
-    toast("Profile unlocked.");
+    toast("Unlocked — you can now message them.");
     refreshWalletChip();
-    renderUnlocked(data);
+    renderUnlocked();
   }
 
   if (unlock) {
-    const { data } = await spendTokens("unlock_profile", targetId, 0).catch(() => ({ data: null }));
-    renderUnlocked(data);
+    renderUnlocked();
   } else {
     renderLocked();
   }
@@ -1091,14 +1090,44 @@ async function sendMessage(photoFile) {
   input.value = "";
 }
 
-/* ---------- my profile ---------- */
+/* ---------- my profile: read-only display ---------- */
+async function loadMyProfileDisplay() {
+  const detail = document.getElementById("myProfileDetail");
+  detail.innerHTML = `<div class="empty-state">Loading your profile…</div>`;
+
+  const { data: p, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+  if (error || !p) { detail.innerHTML = `<div class="empty-state">Could not load your profile.</div>`; return; }
+
+  const initial = (p.display_name || "?").charAt(0).toUpperCase();
+  const label = { sugar_daddy: "Sugar Daddy", sugar_mummy: "Sugar Mummy", sugar_baby: "Sugar Baby" }[p.gender] || "";
+  const photoInner = p.photo_url
+    ? `<img src="${escapeHtml(p.photo_url)}" style="width:100%;height:100%;object-fit:cover;" />`
+    : initial;
+  const facts = [p.height_cm ? `${p.height_cm}cm` : "", p.education, p.smoking, p.drinking].filter(Boolean).map(escapeHtml).join(" · ");
+
+  detail.innerHTML = `
+    <div class="photo">${photoInner}</div>
+    <div>
+      <h1>${escapeHtml(p.display_name)}, ${p.age ?? (p.date_of_birth ? Math.floor((Date.now() - new Date(p.date_of_birth)) / 31557600000) : "")}</h1>
+      <div class="meta">${label} · ${escapeHtml(p.location || "")} ${p.is_verified ? "· Verified" : ""}</div>
+      ${p.occupation ? `<div class="meta">${escapeHtml(p.occupation)}</div>` : ""}
+      ${p.interests ? `<div class="meta">Interests: ${escapeHtml(p.interests)}</div>` : ""}
+      ${facts ? `<div class="meta">${facts}</div>` : ""}
+      ${p.languages ? `<div class="meta">Speaks: ${escapeHtml(p.languages)}</div>` : ""}
+      ${p.arrangement_type ? `<div class="meta">Looking for: ${escapeHtml(p.arrangement_type)}</div>` : ""}
+      <div class="about">${escapeHtml(p.bio || "You haven't added a bio yet.")}</div>
+      <button class="btn primary" onclick="go('myprofile-edit')">Edit Profile</button>
+    </div>`;
+}
+
+/* ---------- my profile: edit ---------- */
 function formatCooldownRemaining(ms) {
   const hrs = Math.floor(ms / 3600000);
   const mins = Math.floor((ms % 3600000) / 60000);
   return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
 }
 
-async function loadMyProfile() {
+async function loadMyProfileEdit() {
   const { data: p, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
   if (error || !p) { toast("Could not load your profile."); return; }
 
@@ -1115,8 +1144,6 @@ async function loadMyProfile() {
   document.getElementById("mpLanguages").value = p.languages || "";
   document.getElementById("mpArrangement").value = p.arrangement_type || "";
   document.getElementById("mpBio").value = p.bio || "";
-  document.getElementById("mpPhone").value = p.contact_phone || "";
-  document.getElementById("mpWhatsapp").value = p.contact_whatsapp || "";
 
   const preview = document.getElementById("mpPhotoPreview");
   const placeholder = document.getElementById("mpPhotoPlaceholder");
@@ -1185,8 +1212,6 @@ document.getElementById("mpSaveBtn").onclick = async () => {
     languages: document.getElementById("mpLanguages").value || null,
     arrangement_type: document.getElementById("mpArrangement").value || null,
     bio: document.getElementById("mpBio").value,
-    contact_phone: document.getElementById("mpPhone").value,
-    contact_whatsapp: document.getElementById("mpWhatsapp").value || null,
   };
   if (photoUrl) updates.photo_url = photoUrl;
 
@@ -1196,7 +1221,7 @@ document.getElementById("mpSaveBtn").onclick = async () => {
   if (error) {
     if (error.message.includes("PROFILE_EDIT_COOLDOWN")) {
       toast("You can only edit your profile once every 24 hours.");
-      loadMyProfile(); // re-render the cooldown banner with accurate time
+      loadMyProfileEdit(); // re-render the cooldown banner with accurate time
     } else {
       toast(error.message);
       btn.textContent = "Save changes";
@@ -1204,7 +1229,7 @@ document.getElementById("mpSaveBtn").onclick = async () => {
     return;
   }
   toast("Profile updated.");
-  loadMyProfile(); // reflects the new cooldown window immediately
+  go("myprofile"); // back to the read-only display with the fresh data
 };
 
 /* ---------- expose functions used by inline onclick="" attributes ---------- */
