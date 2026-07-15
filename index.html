@@ -1114,7 +1114,7 @@ function containsBlockedContent(text) {
   return patterns.some((p) => p.test(text));
 }
 
-document.getElementById("sendBtn").onclick = sendMessage;
+document.getElementById("sendBtn").onclick = () => sendMessage();
 document.getElementById("msgInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMessage(); });
 document.getElementById("chatPhotoInput").addEventListener("change", (e) => {
   const file = e.target.files[0];
