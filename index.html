@@ -1164,7 +1164,8 @@ async function sendMessage(photoFile) {
       const { data } = supabase.storage.from("chat-photos").getPublicUrl(path);
       imageUrl = data.publicUrl;
     } catch (err) {
-      await refundAndFail("Photo upload failed — your credit was refunded.");
+      console.error("Chat photo upload failed:", err);
+      await refundAndFail(`Photo upload failed: ${err.message || "unknown error"}. Your credit was refunded.`);
       return;
     }
   }
