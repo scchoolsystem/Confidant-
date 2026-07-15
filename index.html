@@ -160,7 +160,7 @@ a{color:inherit;}
     <div class="wrap">
       <div class="brand" onclick="go(sessionOK() ? 'browse' : 'landing')">Confidant <small>Est. Discretion</small></div>
       <nav class="nav" id="loggedOutNav">
-        <a onclick="go('landing')">Log in</a>
+        <a onclick="renderLogin(); go('landing');">Log in</a>
       </nav>
       <nav class="nav" id="loggedInNav" style="display:none;">
         <a onclick="go('browse')" data-view-link="browse">Browse</a>
